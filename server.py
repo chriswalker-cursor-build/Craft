@@ -1,3 +1,21 @@
+"""Craft multiplayer server — Python half of the C client ↔ server boundary.
+
+Owns (online mode), per docs/ADR-001-modular-craft.md and docs/PROTOCOL.md:
+  - TCP accept + line framing (Handler)
+  - Authoritative validate / SQLite persist / peer fan-out (Model)
+  - Opcode handlers for client proposals (B/L/S/C/P/T/A/V)
+
+Does not own (stays on the C client — do not migrate here in Stretch):
+  - GLFW/GL, mesh upload, HUD, input bindings
+  - Local movement / collision / remote-player interpolation
+  - Offline place/break/save via src/db.c
+  - Client-local slash commands (/offline, /online, /login, /logout, /view)
+
+Wire: existing v1 ASCII, one command per line on TCP :4080.
+Do not invent opcodes or change message shapes in this module without a
+sequenced client change (serialize per ADR-001). Characterises current
+behaviour only — no gameplay-feel changes.
+"""
 from math import floor
 from world import World
 import Queue
@@ -36,6 +54,8 @@ ALLOWED_ITEMS = set([
     32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
     48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63])
 
+# v1 wire opcodes — shared contract with src/client.c (send) and
+# parse_buffer in src/main.c (recv). Summary tables: ADR-001 / PROTOCOL.md.
 AUTHENTICATE = 'A'
 BLOCK = 'B'
 CHUNK = 'C'
@@ -67,7 +87,43 @@ def chunked(x):
     return int(floor(round(x) / CHUNK_SIZE))
 
 def packet(*args):
+    """Format one server→client v1 line: CMD,arg1,...\\n."""
     return '%s\n' % ','.join(map(str, args))
+
+def block_reject_message(user_id, y, w, previous):
+    """Pure online place/break gate for client B,x,y,z,w proposals.
+
+    Returns a talk string if the server must reject; None if allowed.
+    Characterises existing Model.on_block checks — authority stays here
+    online; the C client only proposes after optimistic local apply.
+    """
+    if AUTH_REQUIRED and user_id is None:
+        return 'Only logged in users are allowed to build.'
+    elif y <= 0 or y > 255:
+        return 'Invalid block coordinates.'
+    elif w not in ALLOWED_ITEMS:
+        return 'That item is not allowed.'
+    elif w and previous:
+        return 'Cannot create blocks in a non-empty space.'
+    elif not w and not previous:
+        return 'That space is already empty.'
+    elif previous in INDESTRUCTIBLE_ITEMS:
+        return 'Cannot destroy that type of block.'
+    return None
+
+def light_reject_message(user_id, block, w):
+    """Pure online light gate for client L,x,y,z,w proposals.
+
+    Returns a talk string if rejected; None if allowed. Same authority
+    split as block_reject_message (server validates; client proposes).
+    """
+    if AUTH_REQUIRED and user_id is None:
+        return 'Only logged in users are allowed to build.'
+    elif block == 0:
+        return 'Lights must be placed on a block.'
+    elif w < 0 or w > 15:
+        return 'Invalid light value.'
+    return None
 
 class RateLimiter(object):
     def __init__(self, rate, per):
@@ -95,6 +151,12 @@ class Server(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
     daemon_threads = True
 
 class Handler(SocketServer.BaseRequestHandler):
+    """Per-connection TCP I/O and line framing only.
+
+    Recv thread: normalize CRLF, split on \\n, rate-limit, enqueue to Model.
+    Send thread: drain per-client queue onto the socket.
+    Does not validate world edits — that is Model's job (server authority).
+    """
     def setup(self):
         self.position_limiter = RateLimiter(100, 5)
         self.limiter = RateLimiter(1000, 10)
@@ -167,10 +229,17 @@ class Handler(SocketServer.BaseRequestHandler):
         self.send_raw(packet(*args))
 
 class Model(object):
+    """Authoritative multiplayer world: validate, persist, fan-out.
+
+    Single worker thread owns SQLite (DB_PATH) and applies client proposals.
+    Online truth for B/L/S is this object; client cache DB is not authority.
+    Terrain defaults come from World (shared lib); deltas live in SQLite.
+    """
     def __init__(self, seed):
         self.world = World(seed)
         self.clients = []
         self.queue = Queue.Queue()
+        # Client → server opcodes this process handles (see PROTOCOL.md).
         self.commands = {
             AUTHENTICATE: self.on_authenticate,
             CHUNK: self.on_chunk,
@@ -181,6 +250,8 @@ class Model(object):
             SIGN: self.on_sign,
             VERSION: self.on_version,
         }
+        # Server-side slash commands only (parsed from T,/...).
+        # /offline /online /login /logout /view are client-local in main.c.
         self.patterns = [
             (re.compile(r'^/nick(?:\s+([^,\s]+))?$'), self.on_nick),
             (re.compile(r'^/spawn$'), self.on_spawn),
@@ -337,6 +408,8 @@ class Model(object):
         # TODO: has left message if was already authenticated
         self.send_talk('%s has joined the game.' % client.nick)
     def on_chunk(self, client, p, q, key=0):
+        # Client C,p,q,key → server streams stored B/L/S deltas (rowid>key),
+        # optional K+R, then C,p,q complete. Wire shapes unchanged (PROTOCOL.md).
         packets = []
         p, q, key = map(int, (p, q, key))
         query = (
@@ -375,22 +448,13 @@ class Model(object):
         packets.append(packet(CHUNK, p, q))
         client.send_raw(''.join(packets))
     def on_block(self, client, x, y, z, w):
+        # Client proposes B,x,y,z,w after optimistic local apply.
+        # On reject: echo prior B+R+T to that client only (correct UX).
+        # On accept: persist + fan-out B/R to peers (proposer already applied).
         x, y, z, w = map(int, (x, y, z, w))
         p, q = chunked(x), chunked(z)
         previous = self.get_block(x, y, z)
-        message = None
-        if AUTH_REQUIRED and client.user_id is None:
-            message = 'Only logged in users are allowed to build.'
-        elif y <= 0 or y > 255:
-            message = 'Invalid block coordinates.'
-        elif w not in ALLOWED_ITEMS:
-            message = 'That item is not allowed.'
-        elif w and previous:
-            message = 'Cannot create blocks in a non-empty space.'
-        elif not w and not previous:
-            message = 'That space is already empty.'
-        elif previous in INDESTRUCTIBLE_ITEMS:
-            message = 'Cannot destroy that type of block.'
+        message = block_reject_message(client.user_id, y, w, previous)
         if message is not None:
             client.send(BLOCK, p, q, x, y, z, previous)
             client.send(REDRAW, p, q)
@@ -432,16 +496,11 @@ class Model(object):
             )
             self.execute(query, dict(x=x, y=y, z=z))
     def on_light(self, client, x, y, z, w):
+        # Client proposes L,x,y,z,w; server is authoritative when online.
         x, y, z, w = map(int, (x, y, z, w))
         p, q = chunked(x), chunked(z)
         block = self.get_block(x, y, z)
-        message = None
-        if AUTH_REQUIRED and client.user_id is None:
-            message = 'Only logged in users are allowed to build.'
-        elif block == 0:
-            message = 'Lights must be placed on a block.'
-        elif w < 0 or w > 15:
-            message = 'Invalid light value.'
+        message = light_reject_message(client.user_id, block, w)
         if message is not None:
             # TODO: client.send(LIGHT, p, q, x, y, z, previous)
             client.send(REDRAW, p, q)
@@ -454,6 +513,7 @@ class Model(object):
         self.execute(query, dict(p=p, q=q, x=x, y=y, z=z, w=w))
         self.send_light(client, p, q, x, y, z, w)
     def on_sign(self, client, x, y, z, face, *args):
+        # Client proposes S,x,y,z,face,text; server persists and fans out.
         if AUTH_REQUIRED and client.user_id is None:
             client.send(TALK, 'Only logged in users are allowed to build.')
             return
