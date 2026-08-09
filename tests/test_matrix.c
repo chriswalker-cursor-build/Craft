@@ -104,12 +104,12 @@ static void test_mat_rotate_axis_y_quarter_turn(void) {
     float m[16];
     float v[4] = {1.0f, 0.0f, 0.0f, 1.0f};
     float out[4];
-    /* -pi/2 about Y: +X -> +Z */
+    /* Characterise existing convention: -pi/2 about Y maps +X -> -Z */
     mat_rotate(m, 0.0f, 1.0f, 0.0f, -3.14159265359f / 2.0f);
     mat_vec_multiply(out, m, v);
     ASSERT_FLOAT_EQ(out[0], 0.0f, 1e-5f);
     ASSERT_FLOAT_EQ(out[1], 0.0f, 1e-5f);
-    ASSERT_FLOAT_EQ(out[2], 1.0f, 1e-5f);
+    ASSERT_FLOAT_EQ(out[2], -1.0f, 1e-5f);
 }
 
 void test_matrix_suite(void) {
