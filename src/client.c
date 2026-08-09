@@ -39,6 +39,110 @@ int get_client_enabled() {
     return client_enabled;
 }
 
+/* --- Client → server framing (ADR-001); pure, no socket I/O --- */
+
+int client_fmt_version(char *buf, size_t size, int version) {
+    int n;
+    if (!buf || size == 0) {
+        return -1;
+    }
+    n = snprintf(buf, size, "V,%d\n", version);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
+int client_fmt_login(char *buf, size_t size,
+    const char *username, const char *identity_token)
+{
+    int n;
+    if (!buf || size == 0 || !username || !identity_token) {
+        return -1;
+    }
+    n = snprintf(buf, size, "A,%s,%s\n", username, identity_token);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
+int client_fmt_position(char *buf, size_t size,
+    float x, float y, float z, float rx, float ry)
+{
+    int n;
+    if (!buf || size == 0) {
+        return -1;
+    }
+    n = snprintf(buf, size, "P,%.2f,%.2f,%.2f,%.2f,%.2f\n", x, y, z, rx, ry);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
+int client_fmt_chunk(char *buf, size_t size, int p, int q, int key) {
+    int n;
+    if (!buf || size == 0) {
+        return -1;
+    }
+    n = snprintf(buf, size, "C,%d,%d,%d\n", p, q, key);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
+int client_fmt_block(char *buf, size_t size, int x, int y, int z, int w) {
+    int n;
+    if (!buf || size == 0) {
+        return -1;
+    }
+    n = snprintf(buf, size, "B,%d,%d,%d,%d\n", x, y, z, w);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
+int client_fmt_light(char *buf, size_t size, int x, int y, int z, int w) {
+    int n;
+    if (!buf || size == 0) {
+        return -1;
+    }
+    n = snprintf(buf, size, "L,%d,%d,%d,%d\n", x, y, z, w);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
+int client_fmt_sign(char *buf, size_t size,
+    int x, int y, int z, int face, const char *text)
+{
+    int n;
+    if (!buf || size == 0 || !text) {
+        return -1;
+    }
+    n = snprintf(buf, size, "S,%d,%d,%d,%d,%s\n", x, y, z, face, text);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
+int client_fmt_talk(char *buf, size_t size, const char *text) {
+    int n;
+    if (!buf || size == 0 || !text) {
+        return -1;
+    }
+    n = snprintf(buf, size, "T,%s\n", text);
+    if (n < 0 || (size_t)n >= size) {
+        return -1;
+    }
+    return n;
+}
+
 int client_sendall(int sd, char *data, int length) {
     if (!client_enabled) {
         return 0;
@@ -67,29 +171,35 @@ void client_send(char *data) {
 }
 
 void client_version(int version) {
+    char buffer[1024];
     if (!client_enabled) {
         return;
     }
-    char buffer[1024];
-    snprintf(buffer, 1024, "V,%d\n", version);
+    if (client_fmt_version(buffer, sizeof(buffer), version) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
 void client_login(const char *username, const char *identity_token) {
+    char buffer[1024];
     if (!client_enabled) {
         return;
     }
-    char buffer[1024];
-    snprintf(buffer, 1024, "A,%s,%s\n", username, identity_token);
+    if (client_fmt_login(buffer, sizeof(buffer), username, identity_token) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
 void client_position(float x, float y, float z, float rx, float ry) {
+    char buffer[1024];
+    static float px, py, pz, prx, pry = 0;
+    float distance;
     if (!client_enabled) {
         return;
     }
-    static float px, py, pz, prx, pry = 0;
-    float distance =
+    distance =
         (px - x) * (px - x) +
         (py - y) * (py - y) +
         (pz - z) * (pz - z) +
@@ -99,56 +209,67 @@ void client_position(float x, float y, float z, float rx, float ry) {
         return;
     }
     px = x; py = y; pz = z; prx = rx; pry = ry;
-    char buffer[1024];
-    snprintf(buffer, 1024, "P,%.2f,%.2f,%.2f,%.2f,%.2f\n", x, y, z, rx, ry);
+    if (client_fmt_position(buffer, sizeof(buffer), x, y, z, rx, ry) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
 void client_chunk(int p, int q, int key) {
+    char buffer[1024];
     if (!client_enabled) {
         return;
     }
-    char buffer[1024];
-    snprintf(buffer, 1024, "C,%d,%d,%d\n", p, q, key);
+    if (client_fmt_chunk(buffer, sizeof(buffer), p, q, key) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
 void client_block(int x, int y, int z, int w) {
+    char buffer[1024];
     if (!client_enabled) {
         return;
     }
-    char buffer[1024];
-    snprintf(buffer, 1024, "B,%d,%d,%d,%d\n", x, y, z, w);
+    if (client_fmt_block(buffer, sizeof(buffer), x, y, z, w) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
 void client_light(int x, int y, int z, int w) {
+    char buffer[1024];
     if (!client_enabled) {
         return;
     }
-    char buffer[1024];
-    snprintf(buffer, 1024, "L,%d,%d,%d,%d\n", x, y, z, w);
+    if (client_fmt_light(buffer, sizeof(buffer), x, y, z, w) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
 void client_sign(int x, int y, int z, int face, const char *text) {
+    char buffer[1024];
     if (!client_enabled) {
         return;
     }
-    char buffer[1024];
-    snprintf(buffer, 1024, "S,%d,%d,%d,%d,%s\n", x, y, z, face, text);
+    if (client_fmt_sign(buffer, sizeof(buffer), x, y, z, face, text) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
 void client_talk(const char *text) {
+    char buffer[1024];
     if (!client_enabled) {
         return;
     }
     if (strlen(text) == 0) {
         return;
     }
-    char buffer[1024];
-    snprintf(buffer, 1024, "T,%s\n", text);
+    if (client_fmt_talk(buffer, sizeof(buffer), text) < 0) {
+        return;
+    }
     client_send(buffer);
 }
 
