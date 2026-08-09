@@ -53,12 +53,14 @@ add_executable(
     tests/test_matrix.c
     tests/test_util.c
     tests/test_db.c
+    tests/test_client.c
     src/matrix.c
     src/util.c
     src/db.c
     src/map.c
     src/ring.c
     src/sign.c
+    src/client.c
     deps/sqlite/sqlite3.c
     deps/tinycthread/tinycthread.c)
 
