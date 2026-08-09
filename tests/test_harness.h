@@ -6,8 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int g_tests_run = 0;
-static int g_tests_failed = 0;
+extern int g_tests_run;
+extern int g_tests_failed;
 
 #define ASSERT(cond) do { \
     g_tests_run++; \

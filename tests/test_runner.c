@@ -1,5 +1,8 @@
 #include "test_harness.h"
 
+int g_tests_run = 0;
+int g_tests_failed = 0;
+
 void test_matrix_suite(void);
 void test_util_suite(void);
 
