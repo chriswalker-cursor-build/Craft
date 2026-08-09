@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 
 project(craft)
 
@@ -36,9 +36,7 @@ include_directories(${CURL_INCLUDE_DIR})
 if(APPLE)
     target_link_libraries(craft glfw
         ${GLFW_LIBRARIES} ${CURL_LIBRARIES})
-endif()
-
-if(UNIX)
+elseif(UNIX)
     target_link_libraries(craft dl glfw
         ${GLFW_LIBRARIES} ${CURL_LIBRARIES})
 endif()
