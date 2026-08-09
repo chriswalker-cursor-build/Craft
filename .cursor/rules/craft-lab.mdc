@@ -1,0 +1,16 @@
+---
+description: Craft Cloud Agents lab — burden of proof, allowlists, no drive-by rewrites
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Craft lab agent policy
+
+- Close the write loop before PR: `cmake . && make` then `./test_runner` (once harness exists). Never open a red PR.
+- Honour the path allowlist in the task prompt. Stop if you need files outside the allowlist.
+- No drive-by rewrites; no intentional gameplay changes unless asked.
+- Docs-only tasks must not edit `src/**`.
+- PR body: Goal, Allowlist, Proof (commands + pass/fail), Tests, Manual playtest, Inner-loop red→green notes.
+- Follow `docs/GAME_MAP.md` and `docs/ADR-001-*.md`; do not invent architecture.
+- Fork only — not upstream fogleman/Craft.
