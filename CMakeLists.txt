@@ -46,20 +46,29 @@ if(MINGW)
         ${GLFW_LIBRARIES} ${CURL_LIBRARIES})
 endif()
 
-# Headless unit tests for pure helpers (no GLFW/GL runtime).
+# Headless unit tests (no GLFW/GL runtime).
 add_executable(
     test_runner
     tests/test_runner.c
     tests/test_matrix.c
     tests/test_util.c
+    tests/test_db.c
     src/matrix.c
-    src/util.c)
+    src/util.c
+    src/db.c
+    src/map.c
+    src/ring.c
+    src/sign.c
+    deps/sqlite/sqlite3.c
+    deps/tinycthread/tinycthread.c)
 
 target_include_directories(test_runner PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/deps/glew/include
     ${CMAKE_SOURCE_DIR}/deps/glfw/include
-    ${CMAKE_SOURCE_DIR}/deps/lodepng)
+    ${CMAKE_SOURCE_DIR}/deps/lodepng
+    ${CMAKE_SOURCE_DIR}/deps/sqlite
+    ${CMAKE_SOURCE_DIR}/deps/tinycthread)
 
 target_compile_options(test_runner PRIVATE -std=c99 -O0
     -ffunction-sections -fdata-sections)
@@ -70,4 +79,10 @@ elseif(UNIX)
     target_link_options(test_runner PRIVATE -Wl,--gc-sections)
 endif()
 
-target_link_libraries(test_runner m)
+if(APPLE)
+    target_link_libraries(test_runner m pthread)
+elseif(UNIX)
+    target_link_libraries(test_runner m dl pthread)
+else()
+    target_link_libraries(test_runner m)
+endif()
