@@ -45,3 +45,29 @@ if(MINGW)
     target_link_libraries(craft ws2_32.lib glfw
         ${GLFW_LIBRARIES} ${CURL_LIBRARIES})
 endif()
+
+# Headless unit tests for pure helpers (no GLFW/GL runtime).
+add_executable(
+    test_runner
+    tests/test_runner.c
+    tests/test_matrix.c
+    tests/test_util.c
+    src/matrix.c
+    src/util.c)
+
+target_include_directories(test_runner PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/deps/glew/include
+    ${CMAKE_SOURCE_DIR}/deps/glfw/include
+    ${CMAKE_SOURCE_DIR}/deps/lodepng)
+
+target_compile_options(test_runner PRIVATE -std=c99 -O0
+    -ffunction-sections -fdata-sections)
+
+if(APPLE)
+    target_link_options(test_runner PRIVATE -Wl,-dead_strip)
+elseif(UNIX)
+    target_link_options(test_runner PRIVATE -Wl,--gc-sections)
+endif()
+
+target_link_libraries(test_runner m)
